@@ -30,7 +30,9 @@
 
 #include "websockethandler.h"
 
+#include <sgct/profiling.h>
 #include "libwebsockets.h"
+#include <algorithm>
 #include <assert.h>
 #include <exception>
 #include <mutex>
@@ -67,9 +69,14 @@ struct WebSocketHandlerImpl {
 
     /// A pointer to the context that contains our protocol and connection
     lws_context* context = nullptr;
+
+    /// The currently active connection
+    lws* connection = nullptr;
 };
 
 int callback(lws* wsi, lws_callback_reasons reason, void*, void* in, size_t len) {
+    ZoneScoped
+
     // We need this extra check as in some of the early callbacks the protocol doesn't
     // seem to be fully initialized and will return a nullptr.  But we don't handle any of
     // these early callbacks in our switch, so the pImpl being nullptr won't be a problem.
@@ -97,6 +104,8 @@ int callback(lws* wsi, lws_callback_reasons reason, void*, void* in, size_t len)
             break;
         case LWS_CALLBACK_CLIENT_WRITEABLE:
         {
+            ZoneScopedN("Write to WebSocket")
+
             assert(pImpl);
             std::lock_guard lock(pImpl->messageMutex);
             if (pImpl->messageQueue.empty()) {
@@ -108,13 +117,20 @@ int callback(lws* wsi, lws_callback_reasons reason, void*, void* in, size_t len)
             std::vector<std::byte> msg = pImpl->messageQueue.front();
             pImpl->messageQueue.erase(pImpl->messageQueue.begin());
 
-            // Send the message
-            lws_write(
-                wsi,
-                reinterpret_cast<unsigned char*>(msg.data()),
-                msg.size(),
-                LWS_WRITE_TEXT
-            );
+            // Libwebsocket requires a padding in the beginning to include
+            // websocket-related information.  This is seems quite a dirty way of handling
+            // this, but what do I know ¯\_(ツ)_/¯
+            std::vector<std::byte> buffer(LWS_PRE + msg.size());
+            // Null out the entire block, just to be sure we don't send any garbage
+            std::fill(buffer.begin(), buffer.end(), std::byte(0));
+            // Insert the message in the middle block
+            std::copy(msg.begin(), msg.end(), buffer.begin() + LWS_PRE);
+
+            // Send the message.
+            // Yes, we have to pass the pointer past the padding and send the size of the
+            // message, not the buffer...  that is not an error -.-
+            unsigned char* p = reinterpret_cast<unsigned char*>(buffer.data() + LWS_PRE);
+            lws_write(wsi, p, msg.size(), LWS_WRITE_TEXT);
             break;
         }
         case LWS_CALLBACK_CLOSED:
@@ -157,9 +173,14 @@ WebSocketHandler::WebSocketHandler(std::string address, int port,
 WebSocketHandler::~WebSocketHandler() {
     disconnect();
     tick();
+
+    lws_context_destroy(_pImpl->context);
+    _pImpl = nullptr;
 }
 
 bool WebSocketHandler::connect(std::string protocolName, int bufferSize) {
+    ZoneScoped
+
     assert(bufferSize >= 0);
 
     lws_context_creation_info info;
@@ -191,16 +212,30 @@ bool WebSocketHandler::connect(std::string protocolName, int bufferSize) {
     ccinfo.origin = "origin";
     ccinfo.protocol = protocols[0].name;
 
-    lws* connection = lws_client_connect_via_info(&ccinfo);
-    return connection != nullptr;
+    _pImpl->connection = lws_client_connect_via_info(&ccinfo);
+    return _pImpl->connection != nullptr;
 }
 
 void WebSocketHandler::disconnect() {
     _pImpl->wantsToDisconnect = true;
+    lws_callback_on_writable(_pImpl->connection);
 }
 
 void WebSocketHandler::tick() {
-    lws_service(_pImpl->context, 0);
+    ZoneScoped
+    
+    lws_callback_on_writable(_pImpl->connection);
+    lws_service(_pImpl->context,0 );
+}
+
+void WebSocketHandler::queueMessage(std::string message) {
+    std::vector<std::byte> msg(message.size());
+    std::transform(
+        message.begin(), message.end(),
+        msg.begin(),
+        [](char c) { return static_cast<std::byte>(c); }
+    );
+    queueMessage(std::move(msg));
 }
 
 void WebSocketHandler::queueMessage(std::vector<std::byte> message) {

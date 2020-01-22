@@ -78,6 +78,7 @@ public:
     void disconnect();
     void tick();
 
+    void queueMessage(std::string message);
     void queueMessage(std::vector<std::byte> message);
     int queueSize() const;
 

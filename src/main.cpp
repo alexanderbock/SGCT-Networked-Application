@@ -9,8 +9,8 @@ namespace {
     std::unique_ptr<WebSocketHandler> wsHandler;
 
 
-    sgct::SharedInt64 exampleInt(0);
-    sgct::SharedString exampleString;
+    int64_t exampleInt = 0;
+    std::string exampleString;
 } // namespace
 
 
@@ -28,26 +28,37 @@ void preSync() {
 
 
     if (sgct::Engine::instance().isMaster()) {
+        if (sgct::Engine::instance().currentFrameNumber() % 10 == 0) {
+
+            sgct::Log::Info("Queing %i", sgct::Engine::instance().currentFrameNumber());
+            wsHandler->queueMessage(
+                std::to_string(sgct::Engine::instance().currentFrameNumber())
+            );
+        }
+
         wsHandler->tick();
     }
 }
 
 
-void encode() {
+std::vector<std::byte> encode() {
     // These are just two examples;  remove them and replace them with the logic of your
     // application that you need to synchronize
-    sgct::SharedData::instance().writeInt64(exampleInt);
-    sgct::SharedData::instance().writeString(exampleString);
+    std::vector<std::byte> data;
+    sgct::serializeObject(data, exampleInt);
+    sgct::serializeObject(data, exampleString);
 
 
+    return data;
 }
 
 
-void decode() {
+void decode(const std::vector<std::byte>& data) {
     // These are just two examples;  remove them and replace them with the logic of your
     // application that you need to synchronize
-    sgct::SharedData::instance().readInt64(exampleInt);
-    sgct::SharedData::instance().readString(exampleString);
+    unsigned int pos = 0;
+    sgct::deserializeObject(data, pos, exampleInt);
+    sgct::deserializeObject(data, pos, exampleString);
 
 
 }
@@ -58,7 +69,7 @@ void postSyncPreDraw() {
 }
 
 
-void draw(sgct::RenderData data) {
+void draw(const sgct::RenderData& data) {
     // Do the rendering in here using the provided projection matrix
 
     const glm::mat4 projectionMatrix = data.modelViewProjectionMatrix;
@@ -146,7 +157,10 @@ int main(int argc, char** argv) {
         wsHandler->connect("example-protocol", MessageSize);
     }
 
+    sgct::Engine::instance().setStatsGraphVisibility(true);
+
     sgct::Engine::instance().render();
+
     sgct::Engine::destroy();
     return EXIT_SUCCESS;
 }
