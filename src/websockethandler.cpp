@@ -60,11 +60,12 @@ struct WebSocketHandlerImpl {
     /// includes the data of the message
     std::function<void(const void*, size_t)> messageReceived;
 
+    bool isConnected = false;
+
     /// The disconnect method sets this to \c true.  We can't disconnect the socket
     /// directly, but have to wait for a round-trip through the callback method, which
     /// needs to return -1 in order to signal to libwebsocket that it should close it.
     /// ¯\_(ツ)_/¯
-
     bool wantsToDisconnect = false;
 
     /// A pointer to the context that contains our protocol and connection
@@ -74,7 +75,7 @@ struct WebSocketHandlerImpl {
     lws* connection = nullptr;
 };
 
-int callback(lws* wsi, lws_callback_reasons reason, void*, void* in, size_t len) {
+int callback(lws* wsi, lws_callback_reasons reason, void* u, void* in, size_t len) {
     ZoneScoped
 
     // We need this extra check as in some of the early callbacks the protocol doesn't
@@ -89,14 +90,15 @@ int callback(lws* wsi, lws_callback_reasons reason, void*, void* in, size_t len)
 
     if (pImpl && pImpl->wantsToDisconnect) {
         pImpl->wantsToDisconnect = false;
-        pImpl->context = nullptr;
         return -1;
     }
 
     switch (reason) {
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
             assert(pImpl);
+            pImpl->isConnected = true;
             pImpl->connectionEstablished();
+            lws_callback_on_writable(wsi);
             break;
         case LWS_CALLBACK_CLIENT_RECEIVE:
             assert(pImpl);
@@ -133,12 +135,25 @@ int callback(lws* wsi, lws_callback_reasons reason, void*, void* in, size_t len)
             lws_write(wsi, p, msg.size(), LWS_WRITE_TEXT);
             break;
         }
+        case LWS_CALLBACK_CLIENT_CLOSED:
         case LWS_CALLBACK_CLOSED:
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
             assert(pImpl);
             pImpl->connectionClosed();
+            pImpl->isConnected = false;
+            pImpl->connection = nullptr;
             pImpl->context = nullptr;
             return -1; // close the connection
+        case LWS_CALLBACK_CLOSED_CLIENT_HTTP:
+        case LWS_CALLBACK_WSI_DESTROY:
+            // For some reason or another, our connection is dead, so if we don't want to
+            // make any more tick() calls (and cause a crash), we gotta get rid of our
+            // own pointers.  The actual memory underneath has already been taken care of
+            // by the libwebsockets library
+            assert(pImpl);
+            pImpl->connection = nullptr;
+            pImpl->context = nullptr;
+            return -1;
         default:
             break;
     }
@@ -217,15 +232,23 @@ bool WebSocketHandler::connect(std::string protocolName, int bufferSize) {
 }
 
 void WebSocketHandler::disconnect() {
-    _pImpl->wantsToDisconnect = true;
-    lws_callback_on_writable(_pImpl->connection);
+    if (_pImpl->context && _pImpl->connection) {
+        _pImpl->wantsToDisconnect = true;
+        lws_callback_on_writable(_pImpl->connection);
+    }
+}
+
+bool WebSocketHandler::isConnected() const {
+    return _pImpl->isConnected;
 }
 
 void WebSocketHandler::tick() {
     ZoneScoped
-    
-    lws_callback_on_writable(_pImpl->connection);
-    lws_service(_pImpl->context,0 );
+
+    if (_pImpl->context && _pImpl->connection) {
+        lws_callback_on_writable(_pImpl->connection);
+        lws_service(_pImpl->context, 0);
+    }
 }
 
 void WebSocketHandler::queueMessage(std::string message) {

@@ -1,9 +1,12 @@
+//
+//  Main.cpp provided under CC0 license
+//
+
 #include "sgct/sgct.h"
 #include "websockethandler.h"
 #include <memory>
 #include <string>
 #include <vector>
-
 
 namespace {
     std::unique_ptr<WebSocketHandler> wsHandler;
@@ -13,6 +16,7 @@ namespace {
     std::string exampleString;
 } // namespace
 
+using namespace sgct;
 
 void initOGL(GLFWwindow*) {
     // Perform OpenGL initialization here, loading textures, shaders, etc that are static
@@ -27,15 +31,16 @@ void preSync() {
     // the computed state is serialized and deserialized in the encode/decode calls
 
 
-    if (sgct::Engine::instance().isMaster()) {
-        if (sgct::Engine::instance().currentFrameNumber() % 10 == 0) {
+    if (Engine::instance().isMaster() && wsHandler->isConnected() &&
+        Engine::instance().currentFrameNumber() % 100 == 0)
+    {
+        wsHandler->queueMessage("ping");
+    }
 
-            sgct::Log::Info("Queing %i", sgct::Engine::instance().currentFrameNumber());
-            wsHandler->queueMessage(
-                std::to_string(sgct::Engine::instance().currentFrameNumber())
-            );
-        }
 
+
+    if (Engine::instance().isMaster()) {
+        // This doesn't have to happen every frame, but why not?
         wsHandler->tick();
     }
 }
@@ -45,8 +50,8 @@ std::vector<std::byte> encode() {
     // These are just two examples;  remove them and replace them with the logic of your
     // application that you need to synchronize
     std::vector<std::byte> data;
-    sgct::serializeObject(data, exampleInt);
-    sgct::serializeObject(data, exampleString);
+    serializeObject(data, exampleInt);
+    serializeObject(data, exampleString);
 
 
     return data;
@@ -57,8 +62,8 @@ void decode(const std::vector<std::byte>& data) {
     // These are just two examples;  remove them and replace them with the logic of your
     // application that you need to synchronize
     unsigned int pos = 0;
-    sgct::deserializeObject(data, pos, exampleInt);
-    sgct::deserializeObject(data, pos, exampleString);
+    deserializeObject(data, pos, exampleInt);
+    deserializeObject(data, pos, exampleString);
 
 
 }
@@ -69,7 +74,7 @@ void postSyncPreDraw() {
 }
 
 
-void draw(const sgct::RenderData& data) {
+void draw(const RenderData& data) {
     // Do the rendering in here using the provided projection matrix
 
     const glm::mat4 projectionMatrix = data.modelViewProjectionMatrix;
@@ -86,28 +91,27 @@ void cleanup() {
 }
 
 
-void keyboard(sgct::Key key, sgct::Modifier modifier, sgct::Action action, int) {
-    using namespace sgct;
-
+void keyboard(Key key, Modifier modifier, Action action, int) {
     if (key == Key::Esc && action == Action::Press) {
         Engine::instance().terminate();
     }
 
     if (key == Key::Space && modifier == Modifier::Shift && action == Action::Release) {
         Log::Info("Released space key");
+        wsHandler->disconnect();
     }
 }
 
 
 void connectionEstablished() {
-    sgct::Log::Info("Connection established");
+    Log::Info("Connection established");
 
 
 }
 
 
 void connectionClosed() {
-    sgct::Log::Info("Connection closed");
+    Log::Info("Connection closed");
 
 
 }
@@ -115,7 +119,7 @@ void connectionClosed() {
 
 void messageReceived(const void* data, size_t length) {
     std::string_view msg = std::string_view(reinterpret_cast<const char*>(data), length);
-    sgct::Log::Info("Message received: %s", msg.data());
+    Log::Info("Message received: %s", msg.data());
 
 
 }
@@ -123,10 +127,10 @@ void messageReceived(const void* data, size_t length) {
 
 int main(int argc, char** argv) {
     std::vector<std::string> arg(argv + 1, argv + argc);
-    sgct::Configuration config = sgct::parseArguments(arg);
-    sgct::config::Cluster cluster = sgct::loadCluster(config.configFilename);
+    Configuration config = sgct::parseArguments(arg);
+    config::Cluster cluster = sgct::loadCluster(config.configFilename);
 
-    sgct::Engine::Callbacks callbacks;
+    Engine::Callbacks callbacks;
     callbacks.initOpenGL = initOGL;
     callbacks.preSync = preSync;
     callbacks.encode = encode;
@@ -137,18 +141,18 @@ int main(int argc, char** argv) {
     callbacks.keyboard = keyboard;
 
     try {
-        sgct::Engine::create(cluster, callbacks, config);
+        Engine::create(cluster, callbacks, config);
     }
     catch (const std::runtime_error & e) {
-        sgct::Log::Error("%s", e.what());
-        sgct::Engine::destroy();
+        Log::Error("%s", e.what());
+        Engine::destroy();
         return EXIT_FAILURE;
     }
 
-    if (sgct::Engine::instance().isMaster()) {
+    if (Engine::instance().isMaster()) {
         wsHandler = std::make_unique<WebSocketHandler>(
             "localhost",
-            80,
+            81,
             connectionEstablished,
             connectionClosed,
             messageReceived
@@ -157,10 +161,8 @@ int main(int argc, char** argv) {
         wsHandler->connect("example-protocol", MessageSize);
     }
 
-    sgct::Engine::instance().setStatsGraphVisibility(true);
+    Engine::instance().render();
 
-    sgct::Engine::instance().render();
-
-    sgct::Engine::destroy();
+    Engine::destroy();
     return EXIT_SUCCESS;
 }
