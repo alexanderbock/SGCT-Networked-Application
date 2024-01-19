@@ -9,7 +9,7 @@ project("sgct-networked-example")
 
 #
 # Add the libraries that this application depends on,
-#  1. SGCT (https://github.com/opensgct/sgct) for window handling and cluster support
+#  1. SGCT (https://github.com/sgct/sgct) for window handling and cluster support
 #  2. libwebsockets (https://libwebsockets.org) for support for WebSockets
 
 # Disable SSL requirement as it requires another library
@@ -22,6 +22,8 @@ set_property(TARGET websockets_shared PROPERTY FOLDER "Dependencies")
 
 add_subdirectory(ext/sgct)
 set_property(TARGET sgct PROPERTY FOLDER "Dependencies")
+
+find_package(glm REQUIRED)
 
 
 #
@@ -38,25 +40,21 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   ext/libwebsockets/include
   ${LIBWEBSOCKETS_INCLUDE_DIRS}
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE sgct websockets)
+target_link_libraries(${PROJECT_NAME} PRIVATE sgct websockets glm::glm)
 
 
 #
 # Setting some compile settings for the project
 #
-set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 17)
-set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 
 if (MSVC)
   # Microsoft Visual Studio related compile options
   target_compile_options(${PROJECT_NAME} PRIVATE
-    "/ZI"       # Edit and continue support
     "/MP"       # Multi-threading support
     "/W4"       # Highest warning level
-    "/wd4201"   # nonstandard extension used : nameless struct/union    
-    "/std:c++17"
+    "/wd4201"   # nonstandard extension used : nameless struct/union
     "/permissive-"
-    "/Zc:strictStrings-"    # Windows header don't adhere to this
     "/Zc:__cplusplus" # Correctly set the __cplusplus macro
   )
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")

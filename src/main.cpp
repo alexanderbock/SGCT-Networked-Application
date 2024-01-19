@@ -4,6 +4,7 @@
 
 #include "sgct/sgct.h"
 #include "websockethandler.h"
+#include <glm/glm.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -58,9 +59,10 @@ std::vector<std::byte> encode() {
 }
 
 
-void decode(const std::vector<std::byte>& data, unsigned int pos) {
+void decode(const std::vector<std::byte>& data) {
     // These are just two examples;  remove them and replace them with the logic of your
     // application that you need to synchronize
+    unsigned pos = 0;
     deserializeObject(data, pos, exampleInt);
     deserializeObject(data, pos, exampleString);
 
@@ -76,7 +78,7 @@ void postSyncPreDraw() {
 void draw(const RenderData& data) {
     // Do the rendering in here using the provided projection matrix
 
-    const glm::mat4 projectionMatrix = data.modelViewProjectionMatrix;
+    const sgct::mat4 projectionMatrix = data.modelViewProjectionMatrix;
 
 
 }
@@ -90,7 +92,7 @@ void cleanup() {
 }
 
 
-void keyboard(Key key, Modifier modifier, Action action, int) {
+void keyboard(Key key, Modifier modifier, Action action, int, Window*) {
     if (key == Key::Esc && action == Action::Press) {
         Engine::instance().terminate();
     }
@@ -118,7 +120,7 @@ void connectionClosed() {
 
 void messageReceived(const void* data, size_t length) {
     std::string_view msg = std::string_view(reinterpret_cast<const char*>(data), length);
-    Log::Info("Message received: %s", msg.data());
+    Log::Info(fmt::format("Message received: {}", msg));
 
 
 }
@@ -142,8 +144,8 @@ int main(int argc, char** argv) {
     try {
         Engine::create(cluster, callbacks, config);
     }
-    catch (const std::runtime_error & e) {
-        Log::Error("%s", e.what());
+    catch (const std::runtime_error& e) {
+        Log::Error(std::string(e.what()));
         Engine::destroy();
         return EXIT_FAILURE;
     }
@@ -160,7 +162,7 @@ int main(int argc, char** argv) {
         wsHandler->connect("example-protocol", MessageSize);
     }
 
-    Engine::instance().render();
+    Engine::instance().exec();
 
     Engine::destroy();
     return EXIT_SUCCESS;
